@@ -23,6 +23,7 @@ pipeline {
                 sh 'git rev-parse --short HEAD'
             }
         }
+
         stage('Validation') {
             steps {
                 script {
@@ -33,14 +34,20 @@ pipeline {
                 echo "Paramètres validés."
             }
         }
+
         stage('Exécution') {
+            environment {
+                ENV_NAME = "${params.ENVIRONMENT}"
+                APP_VERSION = "${params.VERSION}"
+            }
             steps {
                 sh '''
                     mkdir -p artifacts
-                    printf 'build=%s\\ncommit=%s\\nenv=%s\\nversion=%s\\n' "$BUILD_NUMBER" "$(git rev-parse --short HEAD)" "$ENVIRONMENT" "$VERSION" > artifacts/build-info.txt
+                    printf 'build=%s\\ncommit=%s\\nenv=%s\\nversion=%s\\n' "$BUILD_NUMBER" "$(git rev-parse --short HEAD)" "$ENV_NAME" "$APP_VERSION" > artifacts/build-info.txt
                 '''
             }
         }
+
         stage('Post-traitement') {
             steps {
                 archiveArtifacts artifacts: 'artifacts/*.txt', fingerprint: true
