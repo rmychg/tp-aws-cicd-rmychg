@@ -13,6 +13,7 @@ pipeline {
 
     environment {
         SSH_KEY_PATH = '/var/lib/jenkins/.ssh/ansible_target_key'
+        TARGET_HOST = "${params.TARGET_HOST}"
     }
 
     stages {
