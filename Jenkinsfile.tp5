@@ -1,0 +1,67 @@
+pipeline {
+    agent { label 'aws-lab' }
+
+    options {
+        timeout(time: 15, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+
+    parameters {
+        choice(name: 'ENVIRONMENT', choices: ['dev', 'test', 'prod'], description: 'Environnement cible')
+        string(name: 'TARGET_HOST', defaultValue: '172.31.6.10', description: 'IP privée de la machine gérée (web_lab)')
+    }
+
+    environment {
+        SSH_KEY_PATH = '/var/lib/jenkins/.ssh/ansible_target_key'
+    }
+
+    stages {
+        stage('Préparation inventaire') {
+            steps {
+                sh '''
+                    envsubst < ansible/inventory.ini.template > ansible/inventory.ini
+                    cat ansible/inventory.ini
+                '''
+            }
+        }
+
+        stage('Lint') {
+            steps {
+                sh 'ansible-lint ansible/playbook.yml || true'
+            }
+        }
+
+        stage('Vérification (--check --diff)') {
+            steps {
+                sh 'ansible-playbook -i ansible/inventory.ini ansible/playbook.yml --check --diff'
+            }
+        }
+
+        stage('Approbation manuelle') {
+            when {
+                expression { params.ENVIRONMENT == 'prod' }
+            }
+            steps {
+                input message: "Confirmer l'exécution réelle sur l'environnement ${params.ENVIRONMENT} ?"
+            }
+        }
+
+        stage('Exécution réelle') {
+            steps {
+                sh 'ansible-playbook -i ansible/inventory.ini ansible/playbook.yml'
+            }
+        }
+
+        stage('Archivage') {
+            steps {
+                archiveArtifacts artifacts: 'ansible/inventory.ini', fingerprint: true
+            }
+        }
+    }
+
+    post {
+        always {
+            echo "Fin du pipeline Ansible TP5 pour ${params.ENVIRONMENT}"
+        }
+    }
+}
