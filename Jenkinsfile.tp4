@@ -1,0 +1,93 @@
+pipeline {
+    agent none
+
+    options {
+        timeout(time: 15, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+
+    parameters {
+        choice(name: 'ENVIRONMENT', choices: ['dev', 'test', 'prod'], description: 'Environnement cible')
+        string(name: 'VERSION', defaultValue: '1.0.0', description: 'Version de artefact')
+        booleanParam(name: 'DRY_RUN', defaultValue: true, description: 'Mode simulation')
+        string(name: 'CHANGE_REFERENCE', defaultValue: '', description: 'Ticket / demande de changement')
+    }
+
+    stages {
+        stage('Préparation') {
+            agent any
+            steps {
+                echo "Environnement : ${params.ENVIRONMENT}"
+                echo "Version : ${params.VERSION}"
+                echo "Dry run : ${params.DRY_RUN}"
+                echo "Changement : ${params.CHANGE_REFERENCE}"
+            }
+        }
+
+        stage('Validation') {
+            agent any
+            steps {
+                script {
+                    if (!(params.ENVIRONMENT in ['dev', 'test', 'prod'])) {
+                        error("Environnement non autorisé : ${params.ENVIRONMENT}")
+                    }
+                }
+                echo "Paramètres validés."
+            }
+        }
+
+        stage('Vérification AWS CLI (aws-lab)') {
+            agent { label 'aws-lab' }
+            steps {
+                echo "Exécution sur l'agent étiqueté aws-lab"
+                sh 'hostname'
+                sh 'aws --version'
+                sh 'ansible --version'
+                sh 'git rev-parse --short HEAD'
+            }
+        }
+
+        stage('Exécution AWS (aws-lab)') {
+            agent { label 'aws-lab' }
+            environment {
+                ENV_NAME = "${params.ENVIRONMENT}"
+                APP_VERSION = "${params.VERSION}"
+            }
+            steps {
+                sh '''
+                    mkdir -p artifacts
+                    printf 'build=%s\\nagent=%s\\nenv=%s\\nversion=%s\\n' "$BUILD_NUMBER" "$(hostname)" "$ENV_NAME" "$APP_VERSION" > artifacts/build-info-tp4.txt
+                '''
+                archiveArtifacts artifacts: 'artifacts/build-info-tp4.txt', fingerprint: true
+            }
+        }
+
+        stage('Déclenchement job aval') {
+            agent any
+            steps {
+                build job: 'tp4-job-aval',
+                      parameters: [
+                          string(name: 'ENVIRONMENT', value: "${params.ENVIRONMENT}"),
+                          string(name: 'CHANGE_REFERENCE', value: "${params.CHANGE_REFERENCE}")
+                      ],
+                      wait: true
+            }
+        }
+
+        stage('Post-traitement') {
+            agent any
+            steps {
+                echo "Fin du pipeline TP4 pour l'environnement ${params.ENVIRONMENT}"
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Pipeline TP4 terminé avec succès."
+        }
+        failure {
+            echo "Le pipeline TP4 a échoué — vérifier les logs ci-dessus."
+        }
+    }
+}
