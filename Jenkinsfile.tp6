@@ -15,6 +15,9 @@ pipeline {
     environment {
         AWS_DEFAULT_REGION = 'us-east-1'
         SG_NAME = "training-sg-${BUILD_NUMBER}"
+        VPC_ID = "${params.VPC_ID}"
+        SOURCE_CIDR = "${params.SOURCE_CIDR}"
+        ALLOWED_PORT = "${params.ALLOWED_PORT}"
     }
 
     stages {
