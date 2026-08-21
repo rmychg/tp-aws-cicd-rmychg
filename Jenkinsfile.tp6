@@ -1,0 +1,103 @@
+pipeline {
+    agent { label 'aws-lab' }
+
+    options {
+        timeout(time: 15, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+
+    parameters {
+        string(name: 'VPC_ID', defaultValue: 'vpc-0742be88cfe98d006', description: 'VPC de laboratoire')
+        string(name: 'SOURCE_CIDR', defaultValue: '', description: 'Source autorisée pour la règle entrante (ex: 172.31.2.250/32)')
+        string(name: 'ALLOWED_PORT', defaultValue: '22', description: 'Port à ouvrir pour la règle entrante')
+    }
+
+    environment {
+        AWS_DEFAULT_REGION = 'us-east-1'
+        SG_NAME = "training-sg-${BUILD_NUMBER}"
+    }
+
+    stages {
+        stage('Contexte de travail') {
+            steps {
+                sh '''
+                    echo "Région : $AWS_DEFAULT_REGION"
+                    aws sts get-caller-identity
+                '''
+            }
+        }
+
+        stage('Identifier VPC et sous-réseaux') {
+            steps {
+                sh '''
+                    aws ec2 describe-vpcs --vpc-ids "$VPC_ID" --output table
+                    aws ec2 describe-subnets --filters Name=vpc-id,Values="$VPC_ID" --output table
+                '''
+            }
+        }
+
+        stage('Créer Security Group de test') {
+            steps {
+                sh '''
+                    SG_ID=$(aws ec2 create-security-group \
+                        --group-name "$SG_NAME" \
+                        --description "TP6 Jenkins AWS - lab" \
+                        --vpc-id "$VPC_ID" \
+                        --query 'GroupId' --output text)
+                    echo "SG_ID=$SG_ID" > sg_id.env
+
+                    aws ec2 create-tags --resources "$SG_ID" --tags \
+                        Key=Owner,Value=rmychg \
+                        Key=Course,Value=4A-11-CICD \
+                        Key=Environment,Value=lab \
+                        Key=ExpiryDate,Value=2026-08-26
+                '''
+            }
+        }
+
+        stage('Ajouter règle entrante restreinte') {
+            steps {
+                sh '''
+                    . ./sg_id.env
+                    if [ -z "$SOURCE_CIDR" ]; then
+                        echo "ERREUR : SOURCE_CIDR non renseigné — la règle ne doit jamais être ouverte à 0.0.0.0/0 par défaut."
+                        exit 1
+                    fi
+                    aws ec2 authorize-security-group-ingress \
+                        --group-id "$SG_ID" \
+                        --protocol tcp \
+                        --port "$ALLOWED_PORT" \
+                        --cidr "$SOURCE_CIDR"
+                '''
+            }
+        }
+
+        stage('Vérification et archivage') {
+            steps {
+                sh '''
+                    . ./sg_id.env
+                    aws ec2 describe-security-groups --group-ids "$SG_ID" --output json > sg_verification.json
+                    cat sg_verification.json
+                '''
+                archiveArtifacts artifacts: 'sg_verification.json,sg_id.env', fingerprint: true
+            }
+        }
+
+        stage('Nettoyage — suppression du SG de test') {
+            steps {
+                sh '''
+                    . ./sg_id.env
+                    echo "Suppression de $SG_ID"
+                    aws ec2 delete-security-group --group-id "$SG_ID"
+                    echo "Ressource de test supprimée avec succès."
+                '''
+            }
+        }
+    }
+
+    post {
+        always {
+            echo "Fin du pipeline TP6 — Security Group de test créé, vérifié et supprimé."
+        }
+    }
+}
